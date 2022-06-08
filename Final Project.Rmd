@@ -1,0 +1,641 @@
+---
+title: "Final Project"
+author: "Angel Silvar, Matthew Michael Rublee, Safwat Abdul Rahman"
+date: "4/21/2022"
+output: html_document
+---
+
+```{r include=FALSE ,message=FALSE, warning=FALSE} 
+Packages <- c( 'MASS', 'dplyr' ,'tidyverse', 'GGally', 'ISLR', 'caret', 'class','ROCR', 'boot', 'glmnet', 'pROC' ,'tree','randomForest', 'e1071', 'skimr')
+lapply ( Packages , library, character.only  = TRUE)
+```
+
+```{r include=FALSE ,message=FALSE, warning=FALSE}
+df = read_csv('/Users/angelsilvar/Desktop/STATS 473/Final Project/SweatShop.csv')
+df = as_tibble(df)
+df
+#lapply(df1[,], unique)
+```
+
+```{r include=TRUE ,message=FALSE, warning=FALSE}
+factors = c( "date", "quarter", "day", "department", "no_of_style_change", "team")
+
+df = df %>%
+  mutate_at( factors , factor) %>% 
+  dplyr::select(-c(department, date))  %>% drop_na() 
+```
+
+```{r include=TRUE ,message=FALSE, warning=FALSE} 
+# Set a high threshold 
+logit_df = df %>%  
+  mutate (productivity = ifelse ( actual_productivity >= .8  , 1 , 0))%>%
+  dplyr::select(-c(actual_productivity))%>% drop_na()
+logit_df
+```
+
+
+```{r include=TRUE ,message=FALSE, warning=FALSE}
+# Check for unique values of each predictor 
+#lapply(df1[,], unique)
+k = nrow(logit_df)
+prop = .8
+set.seed(123)
+train_id = sample(1:k, size = k*prop, replace = FALSE)
+test_id  = (1:k)[-which(1:k %in% train_id)]
+train_set2 = logit_df[train_id,]
+test_set2  = logit_df[ test_id,]
+```
+
+```{r include=TRUE ,message=FALSE, warning=FALSE} 
+
+ggplot(logit_df , mapping = aes(x = 1:nrow(logit_df) ,
+                              y = productivity, color = "red")) +
+  geom_point(alpha=.2) +
+  theme_bw()
+
+table(logit_df$productivity)
+```
+
+```{r include=TRUE ,message=FALSE, warning=FALSE} 
+logit = glm( formula = productivity ~. , data = train_set2 , family ="binomial") 
+summary(logit)
+```
+
+```{r include=TRUE ,message=FALSE, warning=FALSE}
+logit_best = glm( formula = productivity ~ day + team + targeted_productivity + smv+ incentive + 
+                    no_of_workers , family = 'binomial' ,data = train_set2)
+
+summary(logit_best)
+logit_pred = predict( logit_best , test_set2 , type = "response" )
+table(predict_status = logit_pred  > 0.5 , true_status = test_set2$productivity == 0  )
+```
+
+
+```{r include=TRUE ,message=FALSE, warning=FALSE}
+
+logit_best2 = glm( formula = productivity ~  team + targeted_productivity + smv+ incentive + 
+                    no_of_workers , data = train_set2)
+
+summary(logit_best2)
+logit_pred2 = predict( logit_best2 , test_set2 , type = "response" )
+table(predict_status = logit_pred2  > 0.5 , true_status = test_set2$productivity == 0  )
+```
+
+
+```{r include=TRUE ,message=FALSE, warning=FALSE}
+glm_pred2 = predict( logit_best2 ,test_set2 )
+glm.pred2 = prediction(glm_pred2, test_set2$productivity)
+glm.perf = performance(glm.pred2, "tpr", "fpr")
+plot(glm.perf, main = "ROC Curve")
+abline(0, 1, lty=3)
+
+auc = as.numeric(performance(glm.pred2, "auc")@y.values)
+auc
+```
+
+
+
+### LDA 
+```{r include=TRUE ,message=FALSE, warning=FALSE}
+lda_fit = lda(formula = productivity ~. , data = train_set2 )
+lda_fit
+summary(lda_fit)
+```
+
+```{r include=TRUE ,message=FALSE, warning=FALSE}
+
+lda_pred_class = predict(lda_fit, test_set2)$class
+table(predict_status = lda_pred_class,
+      true_status=test_set2$productivity)
+
+lda_pred = predict(lda_fit, test_set2)
+lda_pred_post = lda_pred$posterior[,2]
+pred = prediction(lda_pred_post, test_set2$productivity)
+perf = performance(pred, "tpr", "fpr")
+plot(perf, main = "ROC Curve")
+abline(0, 1, lty=3)
+
+auc1 = as.numeric(performance(pred, "auc")@y.values)
+auc1
+```
+
+
+### Lasso Model 
+
+```{r include=TRUE ,message=FALSE, warning=FALSE}
+set.seed(123)
+xmat = model.matrix(productivity  ~., data = train_set2 )[,-1]
+xmat = apply(xmat, 2, function (x) scale(x, center=FALSE))
+
+mod.lasso = glmnet(xmat, train_set2$productivity ,family = "binomial" ,alpha=1)
+plot(mod.lasso, xvar = "lambda", label = TRUE)
+
+
+cv.out = cv.glmnet(xmat, train_set2$productivity ,family = "binomial", alpha = 1 , nfolds=5)
+
+best.lambda = cv.out$lambda.min
+best.lambda
+MSE = cv.out$cvm
+MSE <-  min(MSE)
+MSE
+
+pcoefs = predict(mod.lasso, s = best.lambda, type = "coefficients")
+pcoefs
+
+plot( cv.out)
+```
+
+
+### Tree Models: Regression Tree and Classification Tree 
+
+# Classification Tree 
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+train_set_tree = train_set2 %>%
+  mutate(class_productivity = ifelse( productivity == 1 , "Yes", "No"))%>%
+  dplyr::select(-productivity)  
+
+train_set_tree = train_set_tree %>%
+  mutate_at('class_productivity' , factor)
+
+
+
+test_set_tree = test_set2 %>%
+  mutate(class_productivity = ifelse(productivity == 1 , "Yes", "No"))%>%
+  dplyr::select(-productivity)  
+
+test_set_tree = test_set_tree %>%
+  mutate_at('class_productivity', factor)
+
+skim(train_set_tree)
+
+mod.tree2 = tree( class_productivity  ~. , data = train_set_tree )
+
+summary(mod.tree2)
+mod.tree2
+plot(mod.tree2)
+text(mod.tree2, pretty = 0)
+```
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+set.seed(123)
+cv.out = cv.tree(mod.tree2)
+prune.mod = prune.misclass(mod.tree2, best = cv.out$size[which.min(cv.out$dev)])
+```
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+
+yhat.test = predict(prune.mod, newdata = test_set2)
+y.test = test_set2$productivity
+
+mean((y.test-yhat.test)^2)
+```
+
+
+
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+tree_pred_class = predict(prune.mod, newdata = test_set_tree, type = "class")
+table(predict_status = tree_pred_class,true_status=test_set_tree$class_productivity)
+```
+
+
+### Tree Based Model: Bagging, Random Forest, Gradient Boosting 
+
+
+### Random Forest 
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+tree_df = logit_df %>% dplyr::select(-1) 
+  
+M = nrow(tree_df)
+prop = .5
+set.seed(123)
+train_id3 = sample(1:M, size = round(M*prop), replace = FALSE)
+test_id3= (1:M)[-which(1:M %in% train_id)]
+train_set3 = tree_df[train_id3, ]
+test_set3 = tree_df[test_id3, ]
+  
+
+set.seed(123)
+p = ncol(train_set2) - 1
+
+rf_fit = randomForest(productivity  ~ ., data = train_set2,
+                      mtry = round(sqrt(p)), importance = TRUE)
+rf_fit
+varImpPlot(rf_fit, main = "Variable Importance", type = 2 )
+
+yhat.test_rf = predict(rf_fit, test_set2, type = "class")
+tb_rf = table(pred = yhat.test_rf,
+true = test_set2$productivity)
+tb_rf
+
+```
+
+###Bagging Model 
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+
+set.seed(123)
+p = ncol(train_set2) - 1
+
+bag_fit = randomForest(productivity  ~ ., data = train_set2,
+                      mtry = p, importance = TRUE)
+bag_fit
+varImpPlot(bag_fit, main = "Variable Importance", type = 2 )
+plot(bag_fit)
+```
+
+
+
+
+#Gradient Boosting 
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+library(gbm)
+
+set.seed(123)
+boost_fit = gbm( productivity ~ ., train_set2, n.trees = 100, shrinkage = 0.1, interaction.depth = 1,
+                distribution = "bernoulli")
+
+phat.test_boost = predict(boost_fit, test_set2, type = "response")
+
+
+yhat.test_boost = ifelse(phat.test_boost > 0.5, 1, 0)
+tb_boost = table(pred = yhat.test_boost,
+true = test_set2$productivity)
+tb_boost
+
+(tb_boost[1, 1] + tb_boost[2, 2])/sum(tb_boost)
+```
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+
+set.seed(123)
+grid = expand.grid(
+n.trees_vec = c(100, 200),
+shrinkage_vec = c(0.2, 0.1, 0.06, 0.05, 0.04, 0.02, 0.01),
+interaction.depth_vec = c(1, 2, 3),
+miss_classification_rate = NA,
+time = NA
+)
+```
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+
+for(i in 1:nrow(grid)){ time = system.time({
+boost_fit = gbm(productivity ~ ., train_set2, n.trees = grid$n.trees_vec[i], 
+                shrinkage = grid$shrinkage_vec[i],
+                interaction.depth = grid$interaction.depth_vec[i], distribution = "bernoulli", cv.folds = 5)} )
+grid$miss_classification_rate[i] = boost_fit$cv.error[which.min(boost_fit$cv.error)]
+grid$time[i] = time[["elapsed"]]
+}
+
+grid %>% arrange(miss_classification_rate)
+
+boost_fit_best = gbm(productivity ~ ., train_set2, n.trees = 200, shrinkage = 0.05, interaction.depth = 3,
+                     distribution = "bernoulli")
+phat.test_boost_best = predict(boost_fit_best, test_set2 , type = "response")
+yhat.test_boost_best = ifelse(phat.test_boost_best > 0.5, 1, 0)
+tb_boost_best = table(pred = yhat.test_boost_best,
+true = test_set2$productivity)
+tb_boost_best
+sum(diag(tb_boost_best))/sum(tb_boost_best)
+```
+
+
+
+
+
+
+
+
+### Regression Tree 
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+mod.tree = tree(actual_productivity  ~. , data = train_set )
+summary(mod.tree)
+mod.tree
+plot(mod.tree)
+text(mod.tree, pretty = 0)
+```
+
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+cv.out = cv.tree(mod.tree , K = 5 )
+cv.out
+cv.best = cv.out$size[which.min(cv.out$dev)] # This gives us 5 
+cv.best 
+plot(cv.out$size, cv.out$dev, type = "b")
+
+prune.mod = prune.tree(mod.tree, best = cv.best)
+prune.mod
+summary(prune.mod)
+plot(prune.mod)
+text(prune.mod, pretty = 0)
+```
+
+
+
+
+
+
+
+
+
+```{r include=TRUE ,message=FALSE, warning=FALSE}
+# Check for unique values of each predictor 
+#lapply(df1[,], unique)
+n = nrow(df)
+prop = .8
+set.seed(123)
+train_id = sample(1:n, size = n*prop, replace = FALSE)
+test_id  = (1:n)[-which(1:n %in% train_id)]
+train_set = df[train_id,]
+test_set  = df[ test_id,]
+```
+
+
+```{r message=FALSE, warning=FALSE, include=TRUE}
+mod = lm ( formula = actual_productivity ~. , data = train_set )
+summary(mod)
+```
+
+```{r include=TRUE ,message=FALSE, warning=FALSE} 
+#95% CI 
+mod_best = glm (formula = actual_productivity ~  team + targeted_productivity + 
+                  smv + over_time + incentive+ idle_time + idle_men , data = df )  
+summary(mod_best)
+plot(mod_best)
+```
+
+
+
+
+```{r include=FALSE ,message=FALSE, warning=FALSE}
+
+ggpairs(data = train_set2 , columns = 2:11)
+```
+
+
+
+
+
+```{r include=TRUE ,message=FALSE, warning=FALSE}
+lda_fit = lda(formula = productivity ~. , data = train_set2 )
+lda_fit
+summary(lda_fit)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+set.seed(123)
+cv.out = cv.tree(mod.tree2)
+prune.mod = prune.misclass(mod.tree2, best = cv.out$size[which.min(cv.out$dev)])
+summary(prune.mod)
+prune.mod
+plot(prune.mod)
+text(prune.mod, pretty = 0)
+```
+
+
+
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+yhat.test_bag = predict(bag_fit, test_set2, type = "class")
+tb_bag = table(predicted_status = yhat.test_bag,
+true_status = test_set2$productivity)
+tb_bag
+```
+
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+
+tree.test = predict(prune.mod, newdata = test_set2 )
+tb_rf = table(predict_status= tree.test >= 0.5,
+              true_status = test_set2$productivity == 1)
+tb_rf
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#### Support Vector Machine ##### 
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+
+set.seed(123) 
+tune_svm_linear = tune(svm, productivity ~., data = train_set2, kernel = "linear",
+ranges = list(cost = 10^ seq(-3, 2, length.out=6)))
+summary(tune_svm_linear)
+
+tune_svm_radial = tune(svm, productivity ~., data = train_set2, kernel = "radial", gamma = 1, 
+ranges = list(cost = 10^ seq(-3, 2, length.out=6)))
+summary(tune_svm_radial)
+
+tune_svm_poly = tune(svm, productivity ~., data = train_set2, kernel = "radial", degree = 3, 
+ranges = list(cost = 10^ seq(-3, 2, length.out=6)))
+summary(tune_svm_poly)
+```
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+
+svm_fit = svm(productivity ~., data = train_set2, kernel = "linear", cost = .1, scale = FALSE)
+svm_fit_radia = svm(productivity ~., data = train_set2, kernel = "radial", cost = 10, scale = FALSE)
+svm_fit_poly  = svm(productivity ~., data = train_set2, kernel = "polynomial", cost = 10,scale = FALSE)
+
+summary(svm_fit)
+summary(svm_fit_poly)
+summary(svm_fit_radia)
+```
+
+### Confusion Matrix for Maximal Machine Classifier, Support Vector Classifier, Support Vector Machine 
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+
+yhat_test = predict(svm_fit, test_set2)
+tb_svm = table(pred = yhat_test, truth = test_set2$productivity)
+tb_svm
+
+yhat_test = predict(svm_fit_radia, test_set2)
+tb_svm2 = table(pred = yhat_test, truth = test_set2$productivity)
+tb_svm2
+
+yhat_test = predict(svm_fit_poly, test_set2)
+tb_svm3 = table(pred = yhat_test, truth = test_set2$productivity)
+tb_svm3
+
+
+
+
+(tb_svm[1,1] + tb_svm[2,2])/sum(tb_svm)
+(tb_svm2[1,1] + tb_svm2[2,2])/sum(tb_svm2)
+(tb_svm3[1,1] + tb_svm3[2,2])/sum(tb_svm3)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- #```{r include=TRUE ,message=FALSE, warning=FALSE} -->
+<!-- #factors = c( "date", "quarter", "day") -->
+
+<!-- df1 = df %>% -->
+<!--   mutate_at( factors , factor) %>% -->
+<!--   mutate (style_change1         = ifelse ( no_of_style_change == 1 , 1, 0)) %>% -->
+<!--   mutate (style_change2         = ifelse ( no_of_style_change == 2 , 2, 0)) %>% -->
+<!--   #If no style, then 0  -->
+<!--   #mutate (department_num        = ifelse ( department         == "finishing" , 1, 0)) %>% -->
+<!--   # finishing is only appears on wip = NA  -->
+<!--   #sweing is the other department. sweing = 0 in this case  -->
+<!--   mutate (QTR2              = ifelse ( quarter            == "Quarter2" , 2 , 0))%>% -->
+<!--   mutate (QTR3              = ifelse ( quarter            == "Quarter3" , 3 , 0))%>% -->
+<!--   mutate (QTR4              = ifelse ( quarter            == "Quarter4" , 4 , 0))%>% -->
+<!--   mutate (QTR5              = ifelse ( quarter            == "Quarter5" , 5 , 0))%>% -->
+<!--   #iF quarter = QTR1 , then 0  -->
+<!--   mutate (Tuesday               = ifelse ( day            == "Tuesday"  , 2 , 0))%>% -->
+<!--   mutate (Wednesday             = ifelse ( day            == "Wednesday", 3 , 0))%>% -->
+<!--   mutate (Thursday              = ifelse ( day            == "Thursday" , 4 , 0))%>% -->
+<!--   mutate (Saturday              = ifelse ( day            == "Saturday" , 5 , 0))%>% -->
+<!--   mutate (Sunday                = ifelse ( day            == "Sunday"   , 7 , 0))%>% -->
+<!--   dplyr::select(-c(no_of_style_change,quarter,day, date,department))%>% drop_na() -->
+<!-- df1 -->
+
+<!-- ``` -->
+
+
+
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+y = train_set$actual_productivity
+x = train_set$incentive
+fit_linear  = knnreg(y ~ incentive ,data = train_set)
+fit_knn3    = knnreg(y ~ incentive ,data = train_set, k = 3   )
+fit_knn5    = knnreg(y ~ incentive ,data = train_set, k = 5   )
+fit_knn11   = knnreg(y ~ incentive ,data = train_set, k = 11 )
+
+
+
+fhat_linear = predict(fit_linear ,test_set)
+fhat_knn3   = predict(fit_knn3   ,test_set)
+fhat_knn5   = predict(fit_knn5   ,test_set)
+fhat_knn11  = predict(fit_knn11  ,test_set)
+
+
+  r2 = function(y, fhat){ 
+   rss = sum((y - fhat)^2) 
+   tss = sum((y - mean(y))^2) 
+   return (1-rss/tss)
+ }
+
+ r2(test_set$actual_productivity, fhat_linear)
+ r2(test_set$actual_productivity, fhat_knn3)
+ r2(test_set$actual_productivity, fhat_knn5)
+ r2(test_set$actual_productivity, fhat_knn11)
+
+```
+
+```{r  include=TRUE ,message=FALSE, warning=FALSE}
+df = as_tibble(Default) %>%
+mutate(student_numeric = ifelse(student == "Yes", 1, 0))
+xs = dplyr::select(df, student_numeric, balance)
+knn_fit_5 = knn(train=xs, test=xs, df$default, k = 5)
+head(knn_fit_5)
+knn_fit_5_numeric = as.numeric(knn_fit_5)
+head(knn_fit_5_numeric)
+
+library(ROCR)
+pred = prediction(knn_fit_5_numeric, df$default)
+perf = performance(pred, "tpr", "fpr")
+plot(perf, main = "ROC Curve")
+auc = as.numeric(performance(pred, "auc")@y.values)
+auc
+```
+
+
+
+
+
+
+
+
+
+
+
+
