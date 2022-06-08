@@ -1,6 +1,6 @@
 ---
 title: "Final Project"
-author: "Angel Silvar, Matthew Michael Rublee, Safwat Abdul Rahman"
+author: "Angel Silvar" 
 date: "4/21/2022"
 output: html_document
 ---
